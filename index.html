@@ -1,0 +1,288 @@
+# build_kanji_db.py
+import os, re, json, gzip, bz2, tarfile, random
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(ROOT, "_data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+KANJIDIC2_URL = "https://www.edrdg.org/kanjidic/kanjidic2.xml.gz"  # cited via EDRDG/KANJIDIC2 pages
+JMDICT_E_URL  = "https://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz"    # JMdict_e location is documented by EDRDG/JMdict pages
+TATOEBA_SENTENCES_TAR_BZ2_URL = "https://downloads.tatoeba.org/exports/sentences.tar.bz2"  # contains sentences.csv
+
+KANJIDIC2_GZ = os.path.join(DATA_DIR, "kanjidic2.xml.gz")
+JMDICT_GZ    = os.path.join(DATA_DIR, "JMdict_e.gz")
+TATOEBA_TAR  = os.path.join(DATA_DIR, "sentences.tar.bz2")
+
+def download(url, out_path):
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        return
+    print(f"Downloading: {url}")
+    urllib.request.urlretrieve(url, out_path)
+
+def load_kanjidic2(path_gz):
+    print("Parsing KANJIDIC2...")
+    with gzip.open(path_gz, "rb") as f:
+        tree = ET.parse(f)
+    root = tree.getroot()
+
+    # 常用漢字: grade 1-6 (교육용) + 8(중학 잔여 常用) :contentReference[oaicite:5]{index=5}
+    joyo = {}
+    for ch in root.findall("character"):
+        literal = ch.findtext("literal")
+        misc = ch.find("misc")
+        grade = misc.findtext("grade") if misc is not None else None
+        if grade is None:
+            continue
+        try:
+            g = int(grade)
+        except:
+            continue
+        if g not in (1,2,3,4,5,6,8):
+            continue
+
+        # readings
+        rm = ch.find("reading_meaning")
+        on_list, kun_list, meanings = [], [], []
+        if rm is not None:
+            rmgroup = rm.find("rmgroup")
+            if rmgroup is not None:
+                for r in rmgroup.findall("reading"):
+                    r_type = r.attrib.get("r_type")
+                    txt = (r.text or "").strip()
+                    if not txt:
+                        continue
+                    if r_type == "ja_on":
+                        on_list.append(txt)
+                    elif r_type == "ja_kun":
+                        kun_list.append(txt)
+                for m in rmgroup.findall("meaning"):
+                    # meaning without m_lang attr is English in KANJIDIC2
+                    if "m_lang" not in m.attrib:
+                        t = (m.text or "").strip()
+                        if t:
+                            meanings.append(t)
+
+        joyo[literal] = {
+            "k": literal,
+            "grade": g,
+            "y_on": " / ".join(on_list[:3]),
+            "y_kun": " / ".join(kun_list[:3]),
+            "m_en": ", ".join(meanings[:3]) if meanings else ""
+        }
+    print(f"Joyo extracted: {len(joyo)}")
+    return joyo
+
+def load_jmdict(path_gz):
+    print("Parsing JMdict_e...")
+    with gzip.open(path_gz, "rb") as f:
+        tree = ET.parse(f)
+    root = tree.getroot()
+
+    # index: kanji-char -> candidate entries
+    by_kanji_char = defaultdict(list)
+
+    for entry in root.findall("entry"):
+        kebs = [e.text for e in entry.findall("./k_ele/keb") if e.text]
+        rebs = [e.text for e in entry.findall("./r_ele/reb") if e.text]
+        # priority tags (commonness hints)
+        pris = [p.text for p in entry.findall("./k_ele/ke_pri") if p.text] + \
+               [p.text for p in entry.findall("./r_ele/re_pri") if p.text]
+
+        # first 1-2 glosses
+        glosses = []
+        for g in entry.findall("./sense/gloss"):
+            if g.text:
+                glosses.append(g.text.strip())
+            if len(glosses) >= 2:
+                break
+
+        if not kebs and not rebs:
+            continue
+
+        obj = {
+            "keb": kebs,
+            "reb": rebs[:2],
+            "gloss": glosses,
+            "pri": pris
+        }
+
+        # map each kanji char appearing in keb
+        for keb in kebs:
+            for c in keb:
+                # basic filter: only CJK Unified Ideographs range
+                if "\u4e00" <= c <= "\u9fff":
+                    by_kanji_char[c].append(obj)
+
+    return by_kanji_char
+
+def extract_tatoeba_jpn_sentences(tar_bz2_path, limit=800000):
+    """
+    Tatoeba sentences.tar.bz2 includes sentences.csv with fields:
+    sentence_id \t lang \t text
+    We'll extract only jpn lines into an in-memory list up to limit.
+    """
+    print("Extracting Tatoeba Japanese sentences (may take a bit)...")
+    jpn = []
+    with tarfile.open(tar_bz2_path, "r:bz2") as tf:
+        member = tf.getmember("sentences.csv")
+        f = tf.extractfile(member)
+        assert f is not None
+        for i, line in enumerate(f):
+            if i >= limit:
+                break
+            try:
+                s = line.decode("utf-8").rstrip("\n")
+            except:
+                continue
+            parts = s.split("\t")
+            if len(parts) != 3:
+                continue
+            _, lang, text = parts
+            if lang == "jpn" and text:
+                jpn.append(text)
+    print(f"Japanese sentences loaded: {len(jpn)}")
+    return jpn
+
+def pick_vocab_for_kanji(kanji, candidates, n=3):
+    """
+    Choose 3 vocab items that contain the kanji.
+    Heuristic: prefer entries with priority tags, shorter keb, and non-proper-name vibe.
+    """
+    if not candidates:
+        return []
+
+    def score(e):
+        pri_score = 0
+        for p in e.get("pri", []):
+            # common tags often include ichi1/ichi2/news1/news2/spec1/spec2
+            if p.startswith("ichi") or p.startswith("news") or p.startswith("spec") or p.startswith("nf"):
+                pri_score += 3
+            else:
+                pri_score += 1
+        # prefer having keb and being not too long
+        keb = e["keb"][0] if e["keb"] else ""
+        length_penalty = len(keb)
+        return pri_score * 10 - length_penalty
+
+    ranked = sorted(candidates, key=score, reverse=True)
+    out = []
+    seen = set()
+    for e in ranked:
+        if not e["keb"]:
+            continue
+        keb = e["keb"][0]
+        if kanji not in keb:
+            continue
+        if keb in seen:
+            continue
+        reb = e["reb"][0] if e["reb"] else ""
+        gloss = "; ".join(e["gloss"][:2]) if e.get("gloss") else ""
+        out.append({"jp": keb, "y": reb, "en": gloss})
+        seen.add(keb)
+        if len(out) >= n:
+            break
+    return out
+
+def find_sentences_for_word(sentences, word, max_n=2):
+    res = []
+    # simple contains match; for speed, random sample if huge
+    pool = sentences
+    if len(sentences) > 200000:
+        pool = random.sample(sentences, 200000)
+    for s in pool:
+        if word in s and len(s) <= 60:
+            res.append(s)
+            if len(res) >= max_n:
+                break
+    return res
+
+def make_cloze(sentence, answer, distract_pool):
+    q = sentence.replace(answer, "（　）", 1)
+    choices = [answer]
+    # distractors: same length, different token
+    cand = [w for w in distract_pool if w != answer and 1 <= len(w) <= 5]
+    random.shuffle(cand)
+    for w in cand:
+        if len(w) == len(answer) and w not in choices:
+            choices.append(w)
+        if len(choices) >= 4:
+            break
+    while len(choices) < 4 and cand:
+        w = cand.pop()
+        if w not in choices:
+            choices.append(w)
+    random.shuffle(choices)
+    return {"q": q, "a": answer, "choices": choices}
+
+def main():
+    random.seed(42)
+
+    download(KANJIDIC2_URL, KANJIDIC2_GZ)
+    download(JMDICT_E_URL, JMDICT_GZ)
+    download(TATOEBA_SENTENCES_TAR_BZ2_URL, TATOEBA_TAR)
+
+    joyo = load_kanjidic2(KANJIDIC2_GZ)
+    jmd = load_jmdict(JMDICT_GZ)
+    jpn_sentences = extract_tatoeba_jpn_sentences(TATOEBA_TAR)
+
+    # distract pool from frequent-ish vocab: just collect many keb from JMdict candidates
+    distract_pool = []
+    for k, arr in list(jmd.items())[:8000]:
+        for e in arr[:3]:
+            if e["keb"]:
+                distract_pool.append(e["keb"][0])
+    distract_pool = list(dict.fromkeys(distract_pool))  # uniq preserve order
+
+    out = []
+    missing_vocab = 0
+    for kanji, info in joyo.items():
+        candidates = jmd.get(kanji, [])
+        vocab = pick_vocab_for_kanji(kanji, candidates, n=3)
+
+        if not vocab:
+            missing_vocab += 1
+            vocab = []
+
+        # sentences: prefer first vocab word; fallback to kanji contains
+        sentences = []
+        if vocab:
+            s = find_sentences_for_word(jpn_sentences, vocab[0]["jp"], max_n=2)
+            sentences.extend(s)
+        if len(sentences) < 2:
+            # fallback: find sentences containing the kanji
+            s2 = find_sentences_for_word(jpn_sentences, kanji, max_n=2-len(sentences))
+            sentences.extend(s2)
+
+        sent_objs = [{"jp": s, "en": ""} for s in sentences[:2]]
+
+        # cloze: use first sentence + answer = vocab[0].jp if possible else kanji
+        cloze = []
+        if sentences:
+            if vocab and vocab[0]["jp"] in sentences[0]:
+                ans = vocab[0]["jp"]
+            else:
+                ans = kanji
+            cloze.append(make_cloze(sentences[0], ans, distract_pool))
+
+        out.append({
+            "k": kanji,
+            "grade": info["grade"],
+            "y_on": info["y_on"],
+            "y_kun": info["y_kun"],
+            "m_en": info["m_en"],
+            "words": vocab,          # jp, y, en
+            "sentences": sent_objs,  # jp, en
+            "cloze": cloze           # q, a, choices
+        })
+
+    print(f"Built entries: {len(out)} (missing vocab for {missing_vocab})")
+    with open(os.path.join(ROOT, "kanji_db.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False)
+
+    print("Wrote: kanji_db.json")
+
+if __name__ == "__main__":
+    main()
