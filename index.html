@@ -138,4 +138,373 @@ function buildDBFromKanjiList(list){
       {jp: "この（" + k + "）は重要です。", kr: "이 ( " + k + " )는 중요합니다."},
       {jp: "（" + k + "）について説明します。", kr: "( " + k + " )에 대해 설명하겠습니다."}
     ]),
-    cloze: (k, all) =>
+    cloze: (k, all) => ([
+      {
+        q: "この（　）は重要です。",
+        a: "（" + k + "）",
+        choices: shuffle(["（" + k + "）", pickOther(all,k), pickOther(all,k), pickOther(all,k)]).slice(0,4),
+        kr: "이 ( )는 중요합니다."
+      }
+    ])
+  };
+
+  return list.map(k => ({
+    k,
+    y_on: "-",
+    y_kun: "-",
+    m: "의미(추후 채우기)",
+    words: templates.words(k),
+    sentences: templates.sentences(k),
+    cloze: templates.cloze(k, list)
+  }));
+}
+
+const KANJI_DB = buildDBFromKanjiList(KANJI_LIST_200);
+function lookupByK(k){ return KANJI_DB.find(x=>x.k===k); }
+
+/* =========================
+   4) 날짜/기록(localStorage)
+   ========================= */
+const LS_HISTORY_KEY = "KANJI_APP_HISTORY_V1"; // { "YYYY-MM-DD": ["漢","字","…"] }
+
+function kstDateKey(offsetDays=0){
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset()*60000;
+  const kst = new Date(utc + 9*3600000);
+  kst.setDate(kst.getDate() + offsetDays);
+  const y = kst.getFullYear();
+  const m = String(kst.getMonth()+1).padStart(2,"0");
+  const d = String(kst.getDate()).padStart(2,"0");
+  return y + "-" + m + "-" + d;
+}
+function loadHistory(){
+  try { return JSON.parse(localStorage.getItem(LS_HISTORY_KEY) || "{}"); }
+  catch { return {}; }
+}
+function saveHistory(obj){
+  localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(obj));
+}
+function saveTodaySelection(dateKey, ks){
+  const hist = loadHistory();
+  hist[dateKey] = ks;
+  saveHistory(hist);
+}
+function generateToday(){
+  const dateKey = kstDateKey(0);
+  const ks = shuffle(KANJI_DB.map(x=>x.k)).slice(0,3);
+  saveTodaySelection(dateKey, ks);
+  return ks;
+}
+function getTodaySet(){
+  const dateKey = kstDateKey(0);
+  const hist = loadHistory();
+  if (hist[dateKey] && Array.isArray(hist[dateKey]) && hist[dateKey].length === 3){
+    return hist[dateKey];
+  }
+  return generateToday();
+}
+function getRecentDays(n=5){
+  const keys = [];
+  for (let i=0; i<n; i++){
+    keys.push(kstDateKey(-i));
+  }
+  return keys;
+}
+
+/* =========================
+   5) TTS
+   ========================= */
+function speakJP(text){
+  if (!("speechSynthesis" in window)) { alert("이 브라우저는 TTS를 지원하지 않습니다."); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ja-JP";
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+window.speakJP = speakJP;
+
+/* =========================
+   6) 렌더
+   ========================= */
+const view = document.getElementById("view");
+const todayPill = document.getElementById("todayPill");
+
+function renderLearn(){
+  const dateKey = kstDateKey(0);
+  todayPill.textContent = "오늘: " + dateKey + " · 3한자";
+
+  const ks = getTodaySet();
+  const items = ks.map(lookupByK).filter(Boolean);
+
+  view.innerHTML =
+    '<div class="grid">' +
+    items.map(item =>
+      '<div class="card">' +
+        '<div class="kanjiRow">' +
+          '<div class="kanji">' + escapeHtml(item.k) + '</div>' +
+          '<div class="meta">' +
+            '<div class="small"><b>음독</b> ' + escapeHtml(item.y_on||"-") + '</div>' +
+            '<div class="small"><b>훈독</b> ' + escapeHtml(item.y_kun||"-") + '</div>' +
+            '<div class="small"><b>의미</b> ' + escapeHtml(item.m||"-") + '</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="section">' +
+          '<div class="label">단어</div>' +
+          (item.words||[]).slice(0,3).map(w =>
+            '<div class="item">' +
+              '<div class="jp">' + escapeHtml(w.jp) + '（' + escapeHtml(w.y) + '）</div>' +
+              '<div class="sub">' + escapeHtml(w.kr||"") + '</div>' +
+            '</div>'
+          ).join("") +
+        '</div>' +
+
+        '<div class="section">' +
+          '<div class="label">문장</div>' +
+          (item.sentences||[]).slice(0,2).map(s =>
+            '<div class="item">' +
+              '<div class="jp">' + escapeHtml(s.jp) + '</div>' +
+              '<div class="sub">' + escapeHtml(s.kr||"") + '</div>' +
+              '<div class="row" style="margin-top:10px;">' +
+                '<button class="btn" onclick=\'speakJP(' + JSON.stringify(s.jp) + ')\'>' +
+                  '문장 듣기' +
+                '</button>' +
+              '</div>' +
+            '</div>'
+          ).join("") +
+        '</div>' +
+      '</div>'
+    ).join("") +
+    '</div>';
+}
+
+function buildMCQ(obj){
+  const prompt = obj.prompt;
+  const correct = obj.correct;
+  const pool = obj.pool || [];
+  const explain = obj.explain || "";
+
+  const wrongs = shuffle(pool.filter(x => x !== correct)).slice(0,3);
+  const choices = shuffle([correct].concat(wrongs));
+  const id = "q_" + Math.random().toString(16).slice(2);
+  return { id, prompt, correct, choices, explain };
+}
+
+function renderReview(){
+  todayPill.textContent = "복습: 최근 5일";
+
+  const hist = loadHistory();
+  const days = getRecentDays(5);
+  const ks = uniq([].concat.apply([], days.map(d => hist[d] || []))).filter(Boolean);
+
+  if (ks.length === 0){
+    view.innerHTML =
+      '<div class="card">' +
+        '<div class="q">복습 데이터가 없습니다.</div>' +
+        '<div class="muted">먼저 ‘학습’에서 “오늘 3개 생성”을 눌러 기록을 쌓아주세요.</div>' +
+      '</div>';
+    return;
+  }
+
+  const meaningPool = KANJI_DB.map(x => x.m).filter(Boolean);
+  const choicePool = KANJI_DB.map(x => "（"+x.k+"）");
+
+  const quiz = [];
+  ks.forEach(k => {
+    const item = lookupByK(k);
+    if (!item) return;
+
+    quiz.push(buildMCQ({
+      prompt: "다음 한자의 의미로 가장 가까운 것은? — 「" + item.k + "」",
+      correct: item.m,
+      pool: meaningPool,
+      explain: "초보용 템플릿입니다. 추후 의미를 실제 데이터로 교체하면 품질이 바로 올라갑니다."
+    }));
+
+    const c = (item.cloze||[])[0];
+    if (c){
+      quiz.push(buildMCQ({
+        prompt: "【파트5】다음 문장의 ( )에 들어갈 것은?\n" + c.q,
+        correct: c.a,
+        pool: (c.choices && c.choices.length) ? c.choices : choicePool,
+        explain: c.kr || ""
+      }));
+    }
+  });
+
+  const finalQuiz = shuffle(quiz).slice(0, 10);
+
+  view.innerHTML =
+    '<div class="card">' +
+      '<div class="q">최근 5일 복습 퀴즈</div>' +
+      '<div class="muted">대상 날짜: ' + days.join(", ") + '</div>' +
+    '</div>' +
+    '<div class="card quizBox" id="quizBox"></div>';
+
+  const box = document.getElementById("quizBox");
+  box.innerHTML = finalQuiz.map((q, idx) =>
+    '<div class="item" style="background:#fff;">' +
+      '<div class="q">Q' + (idx+1) + '. ' + escapeHtml(q.prompt) + '</div>' +
+      '<div class="choices">' +
+        q.choices.map(ch =>
+          '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' +
+            escapeHtml(ch) +
+          '</button>'
+        ).join("") +
+      '</div>' +
+      '<div class="muted" id="' + q.id + '_exp" style="display:none; margin-top:8px;"></div>' +
+    '</div>'
+  ).join("");
+
+  box.querySelectorAll(".choice").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const qid = btn.dataset.qid;
+      const choice = btn.dataset.choice;
+      const q = finalQuiz.find(x=>x.id===qid);
+      if (!q) return;
+
+      box.querySelectorAll('.choice[data-qid="' + qid + '"]').forEach(b => b.disabled = true);
+
+      box.querySelectorAll('.choice[data-qid="' + qid + '"]').forEach(b => {
+        const c = b.dataset.choice;
+        if (c === q.correct) b.classList.add("correct");
+        if (c === choice && c !== q.correct) b.classList.add("wrong");
+      });
+
+      const exp = document.getElementById(qid + "_exp");
+      exp.style.display = "block";
+      exp.innerHTML = "정답: <b>" + escapeHtml(q.correct) + "</b> · " + escapeHtml(q.explain || "");
+    });
+  });
+}
+
+function renderPart5(){
+  todayPill.textContent = "파트5: 오늘 세트 기반";
+  const ks = getTodaySet();
+  const items = ks.map(lookupByK).filter(Boolean);
+
+  const qs = shuffle([].concat.apply([], items.map(x => x.cloze || []))).slice(0, 6);
+  if (qs.length === 0){
+    view.innerHTML =
+      '<div class="card">' +
+        '<div class="q">파트5 문제 데이터가 없습니다.</div>' +
+        '<div class="muted">각 한자 엔트리에 cloze가 있어야 합니다.</div>' +
+      '</div>';
+    return;
+  }
+
+  const compiled = qs.map(x => buildMCQ({
+    prompt: x.q,
+    correct: x.a,
+    pool: (x.choices && x.choices.length) ? x.choices : ["（？）"],
+    explain: x.kr || ""
+  }));
+
+  view.innerHTML =
+    '<div class="card">' +
+      '<div class="q">JPT 파트5 스타일 빈칸</div>' +
+      '<div class="muted">오늘의 3한자에서 자동 생성합니다(초보용 템플릿).</div>' +
+    '</div>' +
+    '<div class="card quizBox" id="p5Box"></div>';
+
+  const p5Box = document.getElementById("p5Box");
+  p5Box.innerHTML = compiled.map((q, idx) => {
+    const ttsText = q.prompt.split("（　）").join("＿＿"); // replaceAll 안전 대체
+    return (
+      '<div class="item" style="background:#fff;">' +
+        '<div class="q">Q' + (idx+1) + '. ' + escapeHtml(q.prompt) + '</div>' +
+        '<div class="choices">' +
+          q.choices.map(ch =>
+            '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' +
+              escapeHtml(ch) +
+            '</button>'
+          ).join("") +
+        '</div>' +
+        '<div class="row" style="margin-top:10px;">' +
+          '<button class="btn" onclick=\'speakJP(' + JSON.stringify(ttsText) + ')\'>' +
+            '문장 듣기' +
+          '</button>' +
+          '<span class="muted">※ 빈칸은 ‘＿＿’로 읽힙니다</span>' +
+        '</div>' +
+        '<div class="muted" id="' + q.id + '_exp" style="display:none; margin-top:8px;"></div>' +
+      '</div>'
+    );
+  }).join("");
+
+  p5Box.querySelectorAll(".choice").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const qid = btn.dataset.qid;
+      const choice = btn.dataset.choice;
+      const q = compiled.find(x=>x.id===qid);
+      if (!q) return;
+
+      p5Box.querySelectorAll('.choice[data-qid="' + qid + '"]').forEach(b => b.disabled = true);
+
+      p5Box.querySelectorAll('.choice[data-qid="' + qid + '"]').forEach(b => {
+        const c = b.dataset.choice;
+        if (c === q.correct) b.classList.add("correct");
+        if (c === choice && c !== q.correct) b.classList.add("wrong");
+      });
+
+      const exp = document.getElementById(qid + "_exp");
+      exp.style.display = "block";
+      exp.innerHTML = "정답: <b>" + escapeHtml(q.correct) + "</b> · " + escapeHtml(q.explain || "");
+    });
+  });
+}
+
+function renderSettings(){
+  todayPill.textContent = "설정";
+  const hist = loadHistory();
+  const days = Object.keys(hist).sort().reverse();
+  const total = days.reduce((acc, d) => acc + (hist[d] ? hist[d].length : 0), 0);
+
+  view.innerHTML =
+    '<div class="card">' +
+      '<div class="q">기록 관리</div>' +
+      '<div class="muted">기록된 날짜: ' + days.length + '일 · 누적 기록(중복 포함): ' + total + '개</div>' +
+      '<div class="row" style="margin-top:12px;">' +
+        '<button class="btn secondary" id="clearBtn">기록 초기화</button>' +
+      '</div>' +
+    '</div>';
+
+  document.getElementById("clearBtn").onclick = () => {
+    if (!confirm("학습 기록을 전부 삭제할까요?")) return;
+    localStorage.removeItem(LS_HISTORY_KEY);
+    alert("삭제 완료");
+    setTab("learn");
+  };
+}
+
+/* =========================
+   7) 탭 / 이벤트
+   ========================= */
+function setTab(name){
+  document.querySelectorAll(".tab").forEach(t=>{
+    t.classList.toggle("active", t.dataset.tab === name);
+  });
+  if (name === "learn") renderLearn();
+  if (name === "review") renderReview();
+  if (name === "part5") renderPart5();
+  if (name === "settings") renderSettings();
+}
+
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => setTab(t.dataset.tab));
+});
+
+document.getElementById("regenBtn").onclick = () => {
+  const dateKey = kstDateKey(0);
+  const ks = generateToday();
+  alert(dateKey + " 세트 생성: " + ks.join(", "));
+  setTab("learn");
+};
+
+document.getElementById("ttsBtn").onclick = () => {
+  speakJP("本日はよろしくお願いいたします。");
+};
+
+setTab("learn");
+</script>
+</body>
+</html>
