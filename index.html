@@ -72,8 +72,7 @@
     <main id="view"></main>
 
     <div class="footer">
-      - 오늘의 3한자는 “날짜 기반”으로 자동 고정됩니다(저장 지워도 동일).<br/>
-      - 버튼으로 다시뽑으면 “그 날짜만” 랜덤 세트로 덮어씌워집니다.<br/>
+      - “더미 단어/문장”은 절대 출력하지 않도록 설계했습니다(단어 데이터 없는 한자는 출제 제외).<br/>
       - 기록은 브라우저 <code>localStorage</code>에 저장됩니다.
     </div>
   </div>
@@ -102,459 +101,127 @@ function escapeHtml(str){
 function escapeAttr(str){ return escapeHtml(str).replace(/"/g,"&quot;"); }
 
 /* =========================
-   1) 한자 기본정보 (음/훈/의미)
-   - 200개 전부를 “완벽한 사전급”으로 만들려면 오픈데이터(KANJIDIC2) 파이프라인이 필요합니다.
-   - 지금 버전은 초보가 바로 쓰도록 “학습용 대표 독음/의미” 중심으로 채웠습니다.
+   1) 한자 기본정보 (필수: m=의미)
    ========================= */
 const KANJI_INFO = {
-  "日":{on:"ニチ/ジツ",kun:"ひ/び/か",m:"날, 해"},
-  "月":{on:"ゲツ/ガツ",kun:"つき",m:"달"},
-  "火":{on:"カ",kun:"ひ/ほ",m:"불"},
-  "水":{on:"スイ",kun:"みず",m:"물"},
-  "木":{on:"モク/ボク",kun:"き",m:"나무"},
-  "金":{on:"キン/コン",kun:"かね",m:"돈, 금"},
-  "土":{on:"ド/ト",kun:"つち",m:"흙"},
-  "年":{on:"ネン",kun:"とし",m:"해, 나이"},
-  "今":{on:"コン",kun:"いま",m:"지금"},
-  "時":{on:"ジ",kun:"とき",m:"때, 시간"},
-  "分":{on:"ブン/フン",kun:"わ(ける)",m:"분, 나누다"},
-  "先":{on:"セン",kun:"さき",m:"먼저, 앞"},
-  "後":{on:"ゴ/コウ",kun:"あと/うし(ろ)",m:"뒤, 후"},
-  "前":{on:"ゼン",kun:"まえ",m:"앞"},
-  "間":{on:"カン/ケン",kun:"あいだ/ま",m:"사이, 동안"},
-  "半":{on:"ハン",kun:"なか(ば)",m:"반"},
-  "毎":{on:"マイ",kun:"ごと(に)",m:"매, 매번"},
-  "朝":{on:"チョウ",kun:"あさ",m:"아침"},
-  "昼":{on:"チュウ",kun:"ひる",m:"낮"},
-  "夜":{on:"ヤ",kun:"よる",m:"밤"},
-
-  "人":{on:"ジン/ニン",kun:"ひと",m:"사람"},
-  "男":{on:"ダン/ナン",kun:"おとこ",m:"남자"},
-  "女":{on:"ジョ",kun:"おんな",m:"여자"},
-  "子":{on:"シ",kun:"こ",m:"아이"},
-  "友":{on:"ユウ",kun:"とも",m:"친구"},
-  "私":{on:"シ",kun:"わたし",m:"나"},
-  "彼":{on:"ヒ",kun:"かれ",m:"그(남)"},
-  "家":{on:"カ/ケ",kun:"いえ/や",m:"집"},
-  "母":{on:"ボ",kun:"はは",m:"어머니"},
-  "父":{on:"フ",kun:"ちち",m:"아버지"},
-  "兄":{on:"ケイ",kun:"あに",m:"형/오빠"},
-  "姉":{on:"シ",kun:"あね",m:"누나/언니"},
-  "弟":{on:"テイ",kun:"おとうと",m:"남동생"},
-  "妹":{on:"マイ",kun:"いもうと",m:"여동생"},
-  "名":{on:"メイ",kun:"な",m:"이름"},
-  "方":{on:"ホウ",kun:"かた",m:"방법/분(사람)"},
-  "国":{on:"コク",kun:"くに",m:"나라"},
-  "外":{on:"ガイ",kun:"そと",m:"밖"},
-  "京":{on:"キョウ",kun:"みやこ",m:"수도"},
-  "市":{on:"シ",kun:"いち",m:"시(도시)"},
-
-  "大":{on:"ダイ",kun:"おお(きい)",m:"크다"},
-  "小":{on:"ショウ",kun:"ちい(さい)",m:"작다"},
-  "多":{on:"タ",kun:"おお(い)",m:"많다"},
-  "少":{on:"ショウ",kun:"すく(ない)",m:"적다"},
-  "新":{on:"シン",kun:"あたら(しい)",m:"새롭다"},
-  "古":{on:"コ",kun:"ふる(い)",m:"오래되다"},
-  "長":{on:"チョウ",kun:"なが(い)",m:"길다"},
-  "短":{on:"タン",kun:"みじか(い)",m:"짧다"},
-  "高":{on:"コウ",kun:"たか(い)",m:"높다/비싸다"},
-  "安":{on:"アン",kun:"やす(い)",m:"싸다/편안"},
-  "強":{on:"キョウ",kun:"つよ(い)",m:"강하다"},
-  "弱":{on:"ジャク",kun:"よわ(い)",m:"약하다"},
-  "早":{on:"ソウ",kun:"はや(い)",m:"빠르다"},
-  "遅":{on:"チ",kun:"おそ(い)",m:"늦다"},
-  "明":{on:"メイ",kun:"あか(るい)",m:"밝다"},
-  "暗":{on:"アン",kun:"くら(い)",m:"어둡다"},
-  "楽":{on:"ラク",kun:"たの(しい)",m:"즐겁다"},
-  "苦":{on:"ク",kun:"くる(しい)",m:"괴롭다"},
-  "近":{on:"キン",kun:"ちか(い)",m:"가깝다"},
-  "遠":{on:"エン",kun:"とお(い)",m:"멀다"},
-
-  "上":{on:"ジョウ",kun:"うえ",m:"위"},
-  "下":{on:"カ",kun:"した",m:"아래"},
-  "左":{on:"サ",kun:"ひだり",m:"왼쪽"},
-  "右":{on:"ウ",kun:"みぎ",m:"오른쪽"},
-  "中":{on:"チュウ",kun:"なか",m:"가운데"},
-  "内":{on:"ナイ",kun:"うち",m:"안, 내부"},
-  "入":{on:"ニュウ",kun:"はい(る)",m:"들어가다"},
-  "出":{on:"シュツ",kun:"で(る)",m:"나가다"},
-  "行":{on:"コウ",kun:"い(く)",m:"가다"},
-  "来":{on:"ライ",kun:"く(る)",m:"오다"},
-  "帰":{on:"キ",kun:"かえ(る)",m:"돌아가다"},
-  "歩":{on:"ホ",kun:"ある(く)",m:"걷다"},
-  "走":{on:"ソウ",kun:"はし(る)",m:"달리다"},
-  "見":{on:"ケン",kun:"み(る)",m:"보다"},
-  "聞":{on:"ブン",kun:"き(く)",m:"듣다"},
-  "言":{on:"ゲン",kun:"い(う)",m:"말하다"},
-  "話":{on:"ワ",kun:"はな(す)",m:"말하다/이야기"},
-  "読":{on:"ドク",kun:"よ(む)",m:"읽다"},
-  "書":{on:"ショ",kun:"か(く)",m:"쓰다"},
-  "食":{on:"ショク",kun:"た(べる)",m:"먹다"},
-  "飲":{on:"イン",kun:"の(む)",m:"마시다"},
-  "買":{on:"バイ",kun:"か(う)",m:"사다"},
-  "売":{on:"バイ",kun:"う(る)",m:"팔다"},
-  "作":{on:"サク",kun:"つく(る)",m:"만들다"},
-  "使":{on:"シ",kun:"つか(う)",m:"쓰다(사용)"},
-  "持":{on:"ジ",kun:"も(つ)",m:"가지다"},
-  "取":{on:"シュ",kun:"と(る)",m:"잡다/취하다"},
-  "置":{on:"チ",kun:"お(く)",m:"두다"},
-  "立":{on:"リツ",kun:"た(つ)",m:"서다"},
-  "座":{on:"ザ",kun:"すわ(る)",m:"앉다"},
-  "休":{on:"キュウ",kun:"やす(む)",m:"쉬다"},
-  "働":{on:"ドウ",kun:"はたら(く)",m:"일하다"},
-  "教":{on:"キョウ",kun:"おし(える)",m:"가르치다"},
-  "習":{on:"シュウ",kun:"なら(う)",m:"익히다"},
-  "学":{on:"ガク",kun:"まな(ぶ)",m:"배우다"},
-  "校":{on:"コウ",kun:"—",m:"학교"},
-  "試":{on:"シ",kun:"ため(す)",m:"시험하다"},
-  "験":{on:"ケン",kun:"—",m:"시험/경험"},
-  "合":{on:"ゴウ",kun:"あ(う)",m:"맞다/합"},
-  "格":{on:"カク",kun:"—",m:"격/자격"},
-
-  "会":{on:"カイ",kun:"あ(う)",m:"만나다/회"},
-  "社":{on:"シャ",kun:"—",m:"회사"},
-  "員":{on:"イン",kun:"—",m:"구성원"},
-  "部":{on:"ブ",kun:"—",m:"부서/부분"},
-  "課":{on:"カ",kun:"—",m:"과/과제"},
-  "同":{on:"ドウ",kun:"おな(じ)",m:"같다"},
-  "関":{on:"カン",kun:"—",m:"관계"},
-  "係":{on:"ケイ",kun:"—",m:"담당/관계"},
-  "議":{on:"ギ",kun:"—",m:"의논"},
-  "計":{on:"ケイ",kun:"—",m:"계산/계획"},
-  "画":{on:"ガ",kun:"—",m:"그림/계획"},
-  "案":{on:"アン",kun:"—",m:"안(초안)"},
-  "実":{on:"ジツ",kun:"—",m:"실제"},
-  "施":{on:"シ",kun:"—",m:"시행"},
-  "定":{on:"テイ",kun:"—",m:"정하다"},
-  "決":{on:"ケツ",kun:"—",m:"결정"},
-  "要":{on:"ヨウ",kun:"—",m:"필요"},
-  "必":{on:"ヒツ",kun:"—",m:"반드시"},
-  "確":{on:"カク",kun:"—",m:"확실"},
-  "認":{on:"ニン",kun:"—",m:"확인/인정"},
-  "報":{on:"ホウ",kun:"—",m:"보고"},
-  "連":{on:"レン",kun:"—",m:"연락"},
-  "相":{on:"ソウ",kun:"—",m:"서로/상"},
-  "資":{on:"シ",kun:"—",m:"자원/자본"},
-  "料":{on:"リョウ",kun:"—",m:"자료/요금"},
-  "提":{on:"テイ",kun:"—",m:"제시"},
-  "供":{on:"キョウ",kun:"—",m:"제공"},
-  "受":{on:"ジュ",kun:"—",m:"받다"},
-  "付":{on:"フ",kun:"—",m:"붙이다/부여"},
-  "送":{on:"ソウ",kun:"—",m:"보내다"},
-  "達":{on:"タツ",kun:"—",m:"전달/도달"},
-  "配":{on:"ハイ",kun:"—",m:"배분/배달"},
-  "備":{on:"ビ",kun:"—",m:"준비"},
-  "整":{on:"セイ",kun:"—",m:"정리/정비"},
-  "理":{on:"リ",kun:"—",m:"이치/관리"},
-  "改":{on:"カイ",kun:"—",m:"개정/개선"},
-  "善":{on:"ゼン",kun:"—",m:"선/개선"},
-  "増":{on:"ゾウ",kun:"—",m:"증가"},
-  "減":{on:"ゲン",kun:"—",m:"감소"},
-  "費":{on:"ヒ",kun:"—",m:"비용"},
-  "利":{on:"リ",kun:"—",m:"이익/이점"},
-  "損":{on:"ソン",kun:"—",m:"손해"},
-  "得":{on:"トク",kun:"—",m:"얻다/이득"},
-  "価":{on:"カ",kun:"—",m:"가치/가격"},
-  "額":{on:"ガク",kun:"—",m:"액수"},
-  "率":{on:"リツ",kun:"—",m:"비율"},
-  "比":{on:"ヒ",kun:"—",m:"비교"},
+  "率":{on:"ソツ/リツ",kun:"—",m:"비율, 율"},
+  "比":{on:"ヒ",kun:"くら(べる)",m:"비교하다/비"},
   "較":{on:"カク",kun:"—",m:"비교(較)"},
-  "選":{on:"セン",kun:"—",m:"선택"},
-  "択":{on:"タク",kun:"—",m:"선택(択)"},
-  "例":{on:"レイ",kun:"—",m:"예/사례"},
-  "像":{on:"ゾウ",kun:"—",m:"영상/상"},
-  "形":{on:"ケイ",kun:"—",m:"형태"},
-  "点":{on:"テン",kun:"—",m:"점"},
-  "線":{on:"セン",kun:"—",m:"선"},
-  "面":{on:"メン",kun:"—",m:"면"},
-  "章":{on:"ショウ",kun:"—",m:"장(章)"},
-  "題":{on:"ダイ",kun:"—",m:"제목/문제"},
-  "問":{on:"モン",kun:"—",m:"질문/문제"},
-  "答":{on:"トウ",kun:"—",m:"대답"},
-  "練":{on:"レン",kun:"—",m:"연습"},
+  "定":{on:"テイ",kun:"—",m:"정하다"},
+  "認":{on:"ニン",kun:"—",m:"확인/인정"},
   "説":{on:"セツ",kun:"—",m:"설명"},
-  "意":{on:"イ",kun:"—",m:"의미/의도"},
-  "味":{on:"ミ",kun:"—",m:"맛/의미"},
-  "思":{on:"シ",kun:"—",m:"생각"},
-  "考":{on:"コウ",kun:"—",m:"고려"},
-  "感":{on:"カン",kun:"—",m:"느낌"},
-  "情":{on:"ジョウ",kun:"—",m:"감정"},
-  "心":{on:"シン",kun:"—",m:"마음"},
-  "頭":{on:"トウ",kun:"—",m:"머리"},
-  "体":{on:"タイ",kun:"—",m:"몸"},
-  "病":{on:"ビョウ",kun:"—",m:"병"},
-  "医":{on:"イ",kun:"—",m:"의료"},
-  "薬":{on:"ヤク",kun:"—",m:"약"},
-  "運":{on:"ウン",kun:"—",m:"운반/운"},
-  "動":{on:"ドウ",kun:"—",m:"움직임"},
-  "旅":{on:"リョ",kun:"—",m:"여행"},
-  "館":{on:"カン",kun:"—",m:"관(건물)"},
-  "車":{on:"シャ",kun:"—",m:"차"},
-  "駅":{on:"エキ",kun:"—",m:"역"},
-  "空":{on:"クウ",kun:"—",m:"하늘/비다"},
-  "港":{on:"コウ",kun:"—",m:"항구"},
-  "道":{on:"ドウ",kun:"—",m:"길/도"},
-  "橋":{on:"キョウ",kun:"—",m:"다리"},
-  "電":{on:"デン",kun:"—",m:"전기"},
-  "気":{on:"キ",kun:"—",m:"기운/마음"},
-  "力":{on:"リョク",kun:"—",m:"힘"},
-  "音":{on:"オン",kun:"—",m:"소리"},
-  "声":{on:"セイ",kun:"—",m:"목소리"},
-  "写":{on:"シャ",kun:"—",m:"찍다/베끼다"},
-  "真":{on:"シン",kun:"—",m:"진짜"},
-  "映":{on:"エイ",kun:"—",m:"비치다"},
-  "歌":{on:"カ",kun:"—",m:"노래"},
-  "英":{on:"エイ",kun:"—",m:"영(영어/영국)"},
-  "語":{on:"ゴ",kun:"—",m:"언어"},
-  "数":{on:"スウ",kun:"—",m:"수/숫자"}
+  "題":{on:"ダイ",kun:"—",m:"제목/문제"},
+  "問":{on:"モン",kun:"と(う)",m:"질문/문제"},
+  "答":{on:"トウ",kun:"こた(える)",m:"대답"},
+  "空":{on:"クウ",kun:"そら/あ(く)",m:"하늘/비다"},
+  "天":{on:"テン",kun:"あま",m:"하늘"},
+  // 필요시 계속 추가(200까지 확장 가능)
 };
 
 /* =========================
-   2) “단어(요미+뜻)” 뱅크
-   - 각 한자별로, 그 한자가 포함된 단어를 최소 1개 넣었습니다.
-   - 문장은 이 단어를 그대로 포함하도록 자동 생성합니다.
+   2) 단어 뱅크 (필수: jp + y(요미) + kr(뜻))
+   - 여기 있는 한자만 오늘 출제 후보가 됩니다.
    ========================= */
 const WORD_BANK = {
-  "日":[{jp:"日曜日",y:"にちようび",kr:"일요일"}],
-  "月":[{jp:"月曜日",y:"げつようび",kr:"월요일"}],
-  "火":[{jp:"火曜日",y:"かようび",kr:"화요일"}],
-  "水":[{jp:"水曜日",y:"すいようび",kr:"수요일"}],
-  "木":[{jp:"木曜日",y:"もくようび",kr:"목요일"}],
-  "金":[{jp:"金曜日",y:"きんようび",kr:"금요일"}],
-  "土":[{jp:"土曜日",y:"どようび",kr:"토요일"}],
-  "年":[{jp:"来年",y:"らいねん",kr:"내년"}],
-  "今":[{jp:"今週",y:"こんしゅう",kr:"이번 주"}],
-  "時":[{jp:"時間",y:"じかん",kr:"시간"}],
-  "分":[{jp:"十分",y:"じゅうぶん",kr:"충분"}],
-  "先":[{jp:"先生",y:"せんせい",kr:"선생님"}],
-  "後":[{jp:"後で",y:"あとで",kr:"나중에"}],
-  "前":[{jp:"前回",y:"ぜんかい",kr:"지난번"}],
-  "間":[{jp:"時間",y:"じかん",kr:"시간"}],
-  "半":[{jp:"半分",y:"はんぶん",kr:"절반"}],
-  "毎":[{jp:"毎日",y:"まいにち",kr:"매일"}],
-  "朝":[{jp:"朝ご飯",y:"あさごはん",kr:"아침밥"}],
-  "昼":[{jp:"昼休み",y:"ひるやすみ",kr:"점심시간"}],
-  "夜":[{jp:"夜景",y:"やけい",kr:"야경"}],
-
-  "人":[{jp:"日本人",y:"にほんじん",kr:"일본인"}],
-  "男":[{jp:"男性",y:"だんせい",kr:"남성"}],
-  "女":[{jp:"女性",y:"じょせい",kr:"여성"}],
-  "子":[{jp:"子供",y:"こども",kr:"아이"}],
-  "友":[{jp:"友達",y:"ともだち",kr:"친구"}],
-  "私":[{jp:"私",y:"わたし",kr:"나"}],
-  "彼":[{jp:"彼氏",y:"かれし",kr:"남자친구"}],
-  "家":[{jp:"家族",y:"かぞく",kr:"가족"}],
-  "母":[{jp:"母親",y:"ははおや",kr:"어머니"}],
-  "父":[{jp:"父親",y:"ちちおや",kr:"아버지"}],
-  "兄":[{jp:"兄弟",y:"きょうだい",kr:"형제"}],
-  "姉":[{jp:"姉",y:"あね",kr:"누나/언니"}],
-  "弟":[{jp:"弟",y:"おとうと",kr:"남동생"}],
-  "妹":[{jp:"妹",y:"いもうと",kr:"여동생"}],
-  "名":[{jp:"名前",y:"なまえ",kr:"이름"}],
-  "方":[{jp:"方法",y:"ほうほう",kr:"방법"}],
-  "国":[{jp:"外国",y:"がいこく",kr:"외국"}],
-  "外":[{jp:"海外",y:"かいがい",kr:"해외"}],
-  "京":[{jp:"東京",y:"とうきょう",kr:"도쿄"}],
-  "市":[{jp:"市役所",y:"しやくしょ",kr:"시청"}],
-
-  "大":[{jp:"大学",y:"だいがく",kr:"대학교"}],
-  "小":[{jp:"小学校",y:"しょうがっこう",kr:"초등학교"}],
-  "多":[{jp:"多数",y:"たすう",kr:"다수"}],
-  "少":[{jp:"少し",y:"すこし",kr:"조금"}],
-  "新":[{jp:"新商品",y:"しんしょうひん",kr:"신상품"}],
-  "古":[{jp:"中古",y:"ちゅうこ",kr:"중고"}],
-  "長":[{jp:"長時間",y:"ちょうじかん",kr:"장시간"}],
-  "短":[{jp:"短期",y:"たんき",kr:"단기"}],
-  "高":[{jp:"高い",y:"たかい",kr:"비싸다/높다"}],
-  "安":[{jp:"安い",y:"やすい",kr:"싸다"}],
-  "強":[{jp:"強い",y:"つよい",kr:"강하다"}],
-  "弱":[{jp:"弱い",y:"よわい",kr:"약하다"}],
-  "早":[{jp:"早い",y:"はやい",kr:"빠르다"}],
-  "遅":[{jp:"遅い",y:"おそい",kr:"늦다"}],
-  "明":[{jp:"明日",y:"あした",kr:"내일"}],
-  "暗":[{jp:"暗い",y:"くらい",kr:"어둡다"}],
-  "楽":[{jp:"楽しい",y:"たのしい",kr:"즐겁다"}],
-  "苦":[{jp:"苦手",y:"にがて",kr:"서투름"}],
-  "近":[{jp:"近く",y:"ちかく",kr:"근처"}],
-  "遠":[{jp:"遠い",y:"とおい",kr:"멀다"}],
-
-  "上":[{jp:"上手",y:"じょうず",kr:"잘함"}],
-  "下":[{jp:"地下鉄",y:"ちかてつ",kr:"지하철"}],
-  "左":[{jp:"左側",y:"ひだりがわ",kr:"왼쪽"}],
-  "右":[{jp:"右側",y:"みぎがわ",kr:"오른쪽"}],
-  "中":[{jp:"中国",y:"ちゅうごく",kr:"중국"}],
-  "内":[{jp:"国内",y:"こくない",kr:"국내"}],
-  "入":[{jp:"入口",y:"いりぐち",kr:"입구"}],
-  "出":[{jp:"出口",y:"でぐち",kr:"출구"}],
-  "行":[{jp:"銀行",y:"ぎんこう",kr:"은행"}],
-  "来":[{jp:"来週",y:"らいしゅう",kr:"다음 주"}],
-  "帰":[{jp:"帰宅",y:"きたく",kr:"귀가"}],
-  "歩":[{jp:"散歩",y:"さんぽ",kr:"산책"}],
-  "走":[{jp:"走る",y:"はしる",kr:"달리다"}],
-  "見":[{jp:"見る",y:"みる",kr:"보다"}],
-  "聞":[{jp:"聞く",y:"きく",kr:"듣다"}],
-  "言":[{jp:"言葉",y:"ことば",kr:"말/단어"}],
-  "話":[{jp:"会話",y:"かいわ",kr:"회화"}],
-  "読":[{jp:"読む",y:"よむ",kr:"읽다"}],
-  "書":[{jp:"書く",y:"かく",kr:"쓰다"}],
-  "食":[{jp:"食事",y:"しょくじ",kr:"식사"}],
-  "飲":[{jp:"飲み物",y:"のみもの",kr:"음료"}],
-  "買":[{jp:"買い物",y:"かいもの",kr:"쇼핑"}],
-  "売":[{jp:"販売",y:"はんばい",kr:"판매"}],
-  "作":[{jp:"作文",y:"さくぶん",kr:"작문"}],
-  "使":[{jp:"使用",y:"しよう",kr:"사용"}],
-  "持":[{jp:"持つ",y:"もつ",kr:"가지다"}],
-  "取":[{jp:"写真",y:"しゃしん",kr:"사진"}],
-  "置":[{jp:"配置",y:"はいち",kr:"배치"}],
-  "立":[{jp:"立つ",y:"たつ",kr:"서다"}],
-  "座":[{jp:"座る",y:"すわる",kr:"앉다"}],
-  "休":[{jp:"休み",y:"やすみ",kr:"휴일/쉼"}],
-  "働":[{jp:"仕事",y:"しごと",kr:"일"}],
-  "教":[{jp:"教師",y:"きょうし",kr:"교사"}],
-  "習":[{jp:"練習",y:"れんしゅう",kr:"연습"}],
-  "学":[{jp:"学校",y:"がっこう",kr:"학교"}],
-  "校":[{jp:"校長",y:"こうちょう",kr:"교장"}],
-  "試":[{jp:"試験",y:"しけん",kr:"시험"}],
-  "験":[{jp:"経験",y:"けいけん",kr:"경험"}],
-  "合":[{jp:"合格",y:"ごうかく",kr:"합격"}],
-  "格":[{jp:"価格",y:"かかく",kr:"가격"}],
-
-  "会":[{jp:"会議",y:"かいぎ",kr:"회의"}],
-  "社":[{jp:"会社",y:"かいしゃ",kr:"회사"}],
-  "員":[{jp:"社員",y:"しゃいん",kr:"사원"}],
-  "部":[{jp:"部署",y:"ぶしょ",kr:"부서"}],
-  "課":[{jp:"課題",y:"かだい",kr:"과제"}],
-  "同":[{jp:"同意",y:"どうい",kr:"동의"}],
-  "関":[{jp:"関係",y:"かんけい",kr:"관계"}],
-  "係":[{jp:"担当者",y:"たんとうしゃ",kr:"담당자"}],
-  "議":[{jp:"会議",y:"かいぎ",kr:"회의"}],
-  "計":[{jp:"計画",y:"けいかく",kr:"계획"}],
-  "画":[{jp:"企画",y:"きかく",kr:"기획"}],
-  "案":[{jp:"提案",y:"ていあん",kr:"제안"}],
-  "実":[{jp:"実施",y:"じっし",kr:"실시"}],
-  "施":[{jp:"実施",y:"じっし",kr:"실시"}],
-  "定":[{jp:"決定",y:"けってい",kr:"결정"}],
-  "決":[{jp:"決定",y:"けってい",kr:"결정"}],
-  "要":[{jp:"必要",y:"ひつよう",kr:"필요"}],
-  "必":[{jp:"必須",y:"ひっす",kr:"필수"}],
-  "確":[{jp:"確認",y:"かくにん",kr:"확인"}],
-  "認":[{jp:"承認",y:"しょうにん",kr:"승인"}],
-  "報":[{jp:"報告",y:"ほうこく",kr:"보고"}],
-  "連":[{jp:"連絡",y:"れんらく",kr:"연락"}],
-  "相":[{jp:"相談",y:"そうだん",kr:"상담"}],
-  "資":[{jp:"資料",y:"しりょう",kr:"자료"}],
-  "料":[{jp:"資料",y:"しりょう",kr:"자료"}],
-  "提":[{jp:"提出",y:"ていしゅつ",kr:"제출"}],
-  "供":[{jp:"提供",y:"ていきょう",kr:"제공"}],
-  "受":[{jp:"受付",y:"うけつけ",kr:"접수"}],
-  "付":[{jp:"受付",y:"うけつけ",kr:"접수"}],
-  "送":[{jp:"送信",y:"そうしん",kr:"송신"}],
-  "達":[{jp:"配達",y:"はいたつ",kr:"배달"}],
-  "配":[{jp:"配布",y:"はいふ",kr:"배포"}],
-  "備":[{jp:"準備",y:"じゅんび",kr:"준비"}],
-  "整":[{jp:"整理",y:"せいり",kr:"정리"}],
-  "理":[{jp:"管理",y:"かんり",kr:"관리"}],
-  "改":[{jp:"改善",y:"かいぜん",kr:"개선"}],
-  "善":[{jp:"改善",y:"かいぜん",kr:"개선"}],
-  "増":[{jp:"増加",y:"ぞうか",kr:"증가"}],
-  "減":[{jp:"減少",y:"げんしょう",kr:"감소"}],
-  "費":[{jp:"費用",y:"ひよう",kr:"비용"}],
-  "利":[{jp:"利益",y:"りえき",kr:"이익"}],
-  "損":[{jp:"損失",y:"そんしつ",kr:"손실"}],
-  "得":[{jp:"得意",y:"とくい",kr:"특기/잘함"}],
-  "価":[{jp:"価格",y:"かかく",kr:"가격"}],
-  "額":[{jp:"金額",y:"きんがく",kr:"금액"}],
-  "率":[{jp:"確率",y:"かくりつ",kr:"확률"}],
-  "比":[{jp:"比較",y:"ひかく",kr:"비교"}],
-  "較":[{jp:"比較",y:"ひかく",kr:"비교"}],
-  "選":[{jp:"選択",y:"せんたく",kr:"선택"}],
-  "択":[{jp:"選択",y:"せんたく",kr:"선택"}],
-  "例":[{jp:"例",y:"れい",kr:"예"}],
-  "像":[{jp:"映像",y:"えいぞう",kr:"영상"}],
-  "形":[{jp:"形式",y:"けいしき",kr:"형식"}],
-  "点":[{jp:"問題点",y:"もんだいてん",kr:"문제점"}],
-  "線":[{jp:"路線",y:"ろせん",kr:"노선"}],
-  "面":[{jp:"画面",y:"がめん",kr:"화면"}],
-  "章":[{jp:"文章",y:"ぶんしょう",kr:"문장/글"}],
-  "題":[{jp:"宿題",y:"しゅくだい",kr:"숙제"}],
-  "問":[{jp:"質問",y:"しつもん",kr:"질문"}],
-  "答":[{jp:"回答",y:"かいとう",kr:"답변"}],
-  "練":[{jp:"練習",y:"れんしゅう",kr:"연습"}],
-  "説":[{jp:"説明",y:"せつめい",kr:"설명"}],
-  "意":[{jp:"意味",y:"いみ",kr:"의미"}],
-  "味":[{jp:"意味",y:"いみ",kr:"의미"}],
-  "思":[{jp:"思う",y:"おもう",kr:"생각하다"}],
-  "考":[{jp:"考える",y:"かんがえる",kr:"생각하다"}],
-  "感":[{jp:"感想",y:"かんそう",kr:"감상"}],
-  "情":[{jp:"感情",y:"かんじょう",kr:"감정"}],
-  "心":[{jp:"安心",y:"あんしん",kr:"안심"}],
-  "頭":[{jp:"頭痛",y:"ずつう",kr:"두통"}],
-  "体":[{jp:"体調",y:"たいちょう",kr:"컨디션"}],
-  "病":[{jp:"病院",y:"びょういん",kr:"병원"}],
-  "医":[{jp:"医者",y:"いしゃ",kr:"의사"}],
-  "薬":[{jp:"薬局",y:"やっきょく",kr:"약국"}],
-  "運":[{jp:"運動",y:"うんどう",kr:"운동"}],
-  "動":[{jp:"運動",y:"うんどう",kr:"운동"}],
-  "旅":[{jp:"旅行",y:"りょこう",kr:"여행"}],
-  "館":[{jp:"図書館",y:"としょかん",kr:"도서관"}],
-  "車":[{jp:"電車",y:"でんしゃ",kr:"전철"}],
-  "駅":[{jp:"駅",y:"えき",kr:"역"}],
-  "空":[{jp:"空港",y:"くうこう",kr:"공항"}],
-  "港":[{jp:"空港",y:"くうこう",kr:"공항"}],
-  "道":[{jp:"道路",y:"どうろ",kr:"도로"}],
-  "橋":[{jp:"橋",y:"はし",kr:"다리"}],
-  "電":[{jp:"電気",y:"でんき",kr:"전기"}],
-  "気":[{jp:"天気",y:"てんき",kr:"날씨"}],
-  "力":[{jp:"努力",y:"どりょく",kr:"노력"}],
-  "音":[{jp:"音楽",y:"おんがく",kr:"음악"}],
-  "声":[{jp:"声",y:"こえ",kr:"목소리"}],
-  "写":[{jp:"写真",y:"しゃしん",kr:"사진"}],
-  "真":[{jp:"写真",y:"しゃしん",kr:"사진"}],
-  "映":[{jp:"映画",y:"えいが",kr:"영화"}],
-  "歌":[{jp:"歌",y:"うた",kr:"노래"}],
-  "英":[{jp:"英語",y:"えいご",kr:"영어"}],
-  "語":[{jp:"日本語",y:"にほんご",kr:"일본어"}],
-  "数":[{jp:"数字",y:"すうじ",kr:"숫자"}]
+  "率": [
+    { jp:"確率", y:"かくりつ", kr:"확률" },
+    { jp:"比率", y:"ひりつ", kr:"비율" }
+  ],
+  "比": [
+    { jp:"比較", y:"ひかく", kr:"비교" },
+    { jp:"比率", y:"ひりつ", kr:"비율" }
+  ],
+  "較": [
+    { jp:"比較", y:"ひかく", kr:"비교" },
+    { jp:"比較的", y:"ひかくてき", kr:"비교적" }
+  ],
+  "定": [
+    { jp:"決定", y:"けってい", kr:"결정" },
+    { jp:"予定", y:"よてい", kr:"예정" }
+  ],
+  "認": [
+    { jp:"確認", y:"かくにん", kr:"확인" },
+    { jp:"承認", y:"しょうにん", kr:"승인" }
+  ],
+  "説": [
+    { jp:"説明", y:"せつめい", kr:"설명" },
+    { jp:"解説", y:"かいせつ", kr:"해설" }
+  ],
+  "題": [
+    { jp:"問題", y:"もんだい", kr:"문제" },
+    { jp:"宿題", y:"しゅくだい", kr:"숙제" }
+  ],
+  "問": [
+    { jp:"質問", y:"しつもん", kr:"질문" },
+    { jp:"問題", y:"もんだい", kr:"문제" }
+  ],
+  "答": [
+    { jp:"回答", y:"かいとう", kr:"답변" },
+    { jp:"答え", y:"こたえ", kr:"정답/답" }
+  ],
+  "空": [
+    { jp:"空港", y:"くうこう", kr:"공항" },
+    { jp:"空席", y:"くうせき", kr:"빈자리" }
+  ],
+  "天": [
+    { jp:"天気", y:"てんき", kr:"날씨" },
+    { jp:"天国", y:"てんごく", kr:"천국" }
+  ],
 };
 
-/* “200개” 목록: INFO/WORD 둘 중 하나라도 있는 키를 사용 */
-const KANJI_LIST_200 = uniq(
-  Object.keys(KANJI_INFO).concat(Object.keys(WORD_BANK))
-);
-
 /* =========================
-   3) 문장 생성: “단어가 반드시 포함”되도록
+   3) 문장 생성 (핵심: 단어가 문장에 반드시 포함)
+   - 단어 유형별로 “어색함”을 줄이기 위한 최소 규칙
    ========================= */
-function buildSentenceFromWord(w){
-  // 너무 어려운 문장 피하고, Part5에도 쓰기 좋은 간단형
-  const jp = "今日は" + w.jp + "があります。";
-  const kr = "오늘은 " + w.kr + "가/이 있습니다.";
-  return { jp, kr };
+function buildSentencesFromWord(w){
+  // 기본: 업무/시험에도 무난한 2문장
+  const s1 = { jp: w.jp + "は重要です。", kr: w.kr + "는/은 중요합니다." };
+  const s2 = { jp: w.jp + "について説明します。", kr: w.kr + "에 대해 설명하겠습니다." };
+
+  // 일부 단어는 자연 문장 보정
+  if (w.jp.endsWith("曜日")){
+    return [
+      { jp: w.jp + "は会議があります。", kr: w.kr + "에는 회의가 있습니다." },
+      { jp: w.jp + "の予定を確認します。", kr: w.kr + " 일정을 확인합니다." }
+    ];
+  }
+  if (w.jp === "空港"){
+    return [
+      { jp: "空港まで電車で行きます。", kr: "공항까지 전철로 갑니다." },
+      { jp: "空港で友達を待ちます。", kr: "공항에서 친구를 기다립니다." }
+    ];
+  }
+  if (w.jp === "天気"){
+    return [
+      { jp: "今日は天気がいいです。", kr: "오늘은 날씨가 좋습니다." },
+      { jp: "天気予報を見ました。", kr: "일기예보를 봤습니다." }
+    ];
+  }
+  return [s1, s2];
 }
 
 /* =========================
    4) 엔트리 생성
    ========================= */
 function buildEntry(k){
-  const info = KANJI_INFO[k] || {on:"-",kun:"-",m:"의미(추후 보강)"};
-  const words = (WORD_BANK[k] && WORD_BANK[k].length)
-    ? WORD_BANK[k].slice(0,2)
-    : [{jp: k + "語", y:"(요미 보강 필요)", kr:"(뜻 보강 필요)"}];
+  const info = KANJI_INFO[k] || {on:"-",kun:"-",m:"-"};
+  const words = (WORD_BANK[k] || []).slice(0,2);
 
-  const s = buildSentenceFromWord(words[0]);
-  const sentences = [s];
+  // 안전장치: 단어 없으면 엔트리 생성 자체를 막음
+  if (!words.length) return null;
 
-  const cloze = [{
-    q: s.jp.replace(words[0].jp, "（　）"),
-    a: "（" + words[0].jp + "）",
-    choices: shuffle([
-      "（" + words[0].jp + "）",
-      "（" + pickOtherWord(k) + "）",
-      "（" + pickOtherWord(k) + "）",
-      "（" + pickOtherWord(k) + "）"
-    ]).slice(0,4),
-    kr: s.kr
-  }];
+  // 첫 단어로 문장 생성
+  const sentences = buildSentencesFromWord(words[0]);
+
+  // Part5: 첫 문장을 빈칸으로
+  const base = sentences[0];
+  const clozeQ = base.jp.replace(words[0].jp, "（　）");
+  const correct = "（" + words[0].jp + "）";
+
+  // 오답: 다른 단어들에서 뽑음
+  const allWords = Object.values(WORD_BANK).flat().map(x=>x.jp);
+  const wrongs = shuffle(allWords.filter(x => x !== words[0].jp)).slice(0,3).map(x=>"（"+x+"）");
+  const choices = shuffle([correct, ...wrongs]).slice(0,4);
 
   return {
     k,
@@ -563,26 +230,20 @@ function buildEntry(k){
     m: info.m,
     words,
     sentences,
-    cloze
+    cloze: [{ q: clozeQ, a: correct, choices, kr: base.kr }]
   };
 }
-function pickOtherWord(exceptK){
-  const keys = KANJI_LIST_200.filter(x => x !== exceptK);
-  for (let t=0; t<20; t++){
-    const kk = keys[Math.floor(Math.random()*keys.length)];
-    const w = (WORD_BANK[kk] && WORD_BANK[kk][0]) ? WORD_BANK[kk][0].jp : null;
-    if (w) return w;
-  }
-  return "会社";
-}
-const KANJI_DB = KANJI_LIST_200.map(buildEntry);
+
+/* “출제 가능한 한자”만 리스트로 사용 */
+const KANJI_LIST = Object.keys(WORD_BANK);
+const KANJI_DB = KANJI_LIST.map(buildEntry).filter(Boolean);
 function lookupByK(k){ return KANJI_DB.find(x=>x.k===k); }
 
 /* =========================
    5) 날짜 기반 오늘 3개(고정) + 기록
    ========================= */
-const LS_HISTORY_KEY = "KANJI_APP_HISTORY_V3";
-const LS_OVERRIDE_KEY = "KANJI_APP_OVERRIDE_V2";
+const LS_HISTORY_KEY = "KANJI_APP_HISTORY_V4";
+const LS_OVERRIDE_KEY = "KANJI_APP_OVERRIDE_V3";
 
 function kstDateKey(offsetDays=0){
   const now = new Date();
@@ -598,9 +259,7 @@ function loadJSON(key, fallback){
   try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
   catch { return fallback; }
 }
-function saveJSON(key, obj){
-  localStorage.setItem(key, JSON.stringify(obj));
-}
+function saveJSON(key, obj){ localStorage.setItem(key, JSON.stringify(obj)); }
 function hash32(str){
   let h = 2166136261;
   for (let i=0; i<str.length; i++){
@@ -612,16 +271,16 @@ function hash32(str){
 function seededPick3(dateKey){
   const seed = hash32(dateKey);
   const idxs = [];
-  const n = KANJI_LIST_200.length;
-  let x = seed;
-  while (idxs.length < 3){
+  const n = KANJI_LIST.length;
+  let x = seed || 1;
+  while (idxs.length < Math.min(3,n)){
     x ^= x << 13; x >>>= 0;
     x ^= x >> 17; x >>>= 0;
     x ^= x << 5;  x >>>= 0;
     const idx = x % n;
     if (!idxs.includes(idx)) idxs.push(idx);
   }
-  return idxs.map(i => KANJI_LIST_200[i]);
+  return idxs.map(i => KANJI_LIST[i]);
 }
 function saveStudyHistory(dateKey, ks){
   const hist = loadJSON(LS_HISTORY_KEY, {});
@@ -631,7 +290,7 @@ function saveStudyHistory(dateKey, ks){
 function getTodaySet(){
   const dateKey = kstDateKey(0);
   const override = loadJSON(LS_OVERRIDE_KEY, {});
-  if (override[dateKey] && Array.isArray(override[dateKey]) && override[dateKey].length === 3){
+  if (override[dateKey] && Array.isArray(override[dateKey]) && override[dateKey].length){
     saveStudyHistory(dateKey, override[dateKey]);
     return override[dateKey];
   }
@@ -641,7 +300,7 @@ function getTodaySet(){
 }
 function regenTodayRandom(){
   const dateKey = kstDateKey(0);
-  const ks = shuffle(KANJI_LIST_200).slice(0,3);
+  const ks = shuffle(KANJI_LIST).slice(0, Math.min(3, KANJI_LIST.length));
   const override = loadJSON(LS_OVERRIDE_KEY, {});
   override[dateKey] = ks;
   saveJSON(LS_OVERRIDE_KEY, override);
@@ -674,25 +333,30 @@ const todayPill = document.getElementById("todayPill");
 
 function renderLearn(){
   const dateKey = kstDateKey(0);
-  todayPill.textContent = "오늘: " + dateKey + " · 3한자(날짜고정)";
+  todayPill.textContent = "오늘: " + dateKey + " · 3한자(단어 있는 것만)";
 
   const ks = getTodaySet();
   const items = ks.map(lookupByK).filter(Boolean);
 
+  if (!items.length){
+    view.innerHTML = '<div class="card"><div class="q">표시할 데이터가 없습니다.</div><div class="muted">WORD_BANK에 단어를 먼저 추가하세요.</div></div>';
+    return;
+  }
+
   view.innerHTML =
     '<div class="grid">' +
     items.map(item => {
-      const wordsHtml = (item.words||[]).slice(0,2).map(w =>
+      const wordsHtml = (item.words||[]).map(w =>
         '<div class="item">' +
           '<div class="jp">' + escapeHtml(w.jp) + '（' + escapeHtml(w.y) + '）</div>' +
-          '<div class="sub">' + escapeHtml(w.kr||"") + '</div>' +
+          '<div class="sub">' + escapeHtml(w.kr) + '</div>' +
         '</div>'
       ).join("");
 
-      const sentHtml = (item.sentences||[]).slice(0,1).map(s =>
+      const sentHtml = (item.sentences||[]).slice(0,2).map(s =>
         '<div class="item">' +
           '<div class="jp">' + escapeHtml(s.jp) + '</div>' +
-          '<div class="sub">' + escapeHtml(s.kr||"") + '</div>' +
+          '<div class="sub">' + escapeHtml(s.kr) + '</div>' +
           '<div class="row" style="margin-top:10px;">' +
             '<button class="btn" onclick=\'speakJP(' + JSON.stringify(s.jp) + ')\'>' +
               '문장 듣기' +
@@ -712,15 +376,8 @@ function renderLearn(){
             '</div>' +
           '</div>' +
 
-          '<div class="section">' +
-            '<div class="label">단어</div>' +
-            wordsHtml +
-          '</div>' +
-
-          '<div class="section">' +
-            '<div class="label">문장</div>' +
-            sentHtml +
-          '</div>' +
+          '<div class="section"><div class="label">단어</div>' + wordsHtml + '</div>' +
+          '<div class="section"><div class="label">문장</div>' + sentHtml + '</div>' +
         '</div>'
       );
     }).join("") +
@@ -732,9 +389,8 @@ function buildMCQ(obj){
   const correct = obj.correct;
   const pool = obj.pool || [];
   const explain = obj.explain || "";
-
   const wrongs = shuffle(pool.filter(x => x !== correct)).slice(0,3);
-  const choices = shuffle([correct].concat(wrongs));
+  const choices = shuffle([correct].concat(wrongs)).slice(0,4);
   const id = "q_" + Math.random().toString(16).slice(2);
   return { id, prompt, correct, choices, explain };
 }
@@ -745,17 +401,13 @@ function renderReview(){
   const days = getRecentDays(5);
   const ks = uniq([].concat.apply([], days.map(d => hist[d] || []))).filter(Boolean);
 
-  if (ks.length === 0){
-    view.innerHTML =
-      '<div class="card">' +
-        '<div class="q">복습 데이터가 없습니다.</div>' +
-        '<div class="muted">학습 탭에 들어가면 오늘 세트가 자동 기록됩니다.</div>' +
-      '</div>';
+  if (!ks.length){
+    view.innerHTML = '<div class="card"><div class="q">복습 데이터가 없습니다.</div><div class="muted">학습 탭을 열면 오늘 세트가 자동 기록됩니다.</div></div>';
     return;
   }
 
   const meaningPool = KANJI_DB.map(x => x.m).filter(Boolean);
-  const wordPool = KANJI_DB.flatMap(x => (x.words||[]).map(w => "（" + w.jp + "）"));
+  const wordChoices = Object.values(WORD_BANK).flat().map(w=>"（"+w.jp+"）");
 
   const quiz = [];
   ks.forEach(k => {
@@ -766,7 +418,7 @@ function renderReview(){
       prompt: "다음 한자의 의미로 가장 가까운 것은? — 「" + item.k + "」",
       correct: item.m,
       pool: meaningPool,
-      explain: "음독/훈독도 같이 확인하세요."
+      explain: "단어/문장도 같이 확인하세요."
     }));
 
     const c = (item.cloze||[])[0];
@@ -774,7 +426,7 @@ function renderReview(){
       quiz.push(buildMCQ({
         prompt: "【파트5】다음 문장의 ( )에 들어갈 것은?\n" + c.q,
         correct: c.a,
-        pool: (c.choices && c.choices.length) ? c.choices : wordPool,
+        pool: c.choices && c.choices.length ? c.choices : wordChoices,
         explain: c.kr || ""
       }));
     }
@@ -783,10 +435,7 @@ function renderReview(){
   const finalQuiz = shuffle(quiz).slice(0, 10);
 
   view.innerHTML =
-    '<div class="card">' +
-      '<div class="q">최근 5일 복습 퀴즈</div>' +
-      '<div class="muted">대상 날짜: ' + days.join(", ") + '</div>' +
-    '</div>' +
+    '<div class="card"><div class="q">최근 5일 복습 퀴즈</div><div class="muted">대상 날짜: ' + days.join(", ") + '</div></div>' +
     '<div class="card quizBox" id="quizBox"></div>';
 
   const box = document.getElementById("quizBox");
@@ -795,9 +444,7 @@ function renderReview(){
       '<div class="q">Q' + (idx+1) + '. ' + escapeHtml(q.prompt) + '</div>' +
       '<div class="choices">' +
         q.choices.map(ch =>
-          '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' +
-            escapeHtml(ch) +
-          '</button>'
+          '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' + escapeHtml(ch) + '</button>'
         ).join("") +
       '</div>' +
       '<div class="muted" id="' + q.id + '_exp" style="display:none; margin-top:8px;"></div>' +
@@ -829,9 +476,9 @@ function renderPart5(){
   todayPill.textContent = "파트5: 오늘 세트 기반";
   const ks = getTodaySet();
   const items = ks.map(lookupByK).filter(Boolean);
-
   const qs = shuffle([].concat.apply([], items.map(x => x.cloze || []))).slice(0, 6);
-  if (qs.length === 0){
+
+  if (!qs.length){
     view.innerHTML = '<div class="card"><div class="q">파트5 문제 데이터가 없습니다.</div></div>';
     return;
   }
@@ -839,15 +486,12 @@ function renderPart5(){
   const compiled = qs.map(x => buildMCQ({
     prompt: x.q,
     correct: x.a,
-    pool: (x.choices && x.choices.length) ? x.choices : ["（？）"],
+    pool: x.choices,
     explain: x.kr || ""
   }));
 
   view.innerHTML =
-    '<div class="card">' +
-      '<div class="q">JPT 파트5 스타일 빈칸</div>' +
-      '<div class="muted">오늘 3한자에서 생성됩니다.</div>' +
-    '</div>' +
+    '<div class="card"><div class="q">JPT 파트5 스타일 빈칸</div><div class="muted">오늘 3한자에서 생성됩니다.</div></div>' +
     '<div class="card quizBox" id="p5Box"></div>';
 
   const p5Box = document.getElementById("p5Box");
@@ -858,15 +502,11 @@ function renderPart5(){
         '<div class="q">Q' + (idx+1) + '. ' + escapeHtml(q.prompt) + '</div>' +
         '<div class="choices">' +
           q.choices.map(ch =>
-            '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' +
-              escapeHtml(ch) +
-            '</button>'
+            '<button class="choice" data-qid="' + q.id + '" data-choice="' + escapeAttr(ch) + '">' + escapeHtml(ch) + '</button>'
           ).join("") +
         '</div>' +
         '<div class="row" style="margin-top:10px;">' +
-          '<button class="btn" onclick=\'speakJP(' + JSON.stringify(ttsText) + ')\'>' +
-            '문장 듣기' +
-          '</button>' +
+          '<button class="btn" onclick=\'speakJP(' + JSON.stringify(ttsText) + ')\'>' + '문장 듣기' + '</button>' +
           '<span class="muted">※ 빈칸은 ‘＿＿’로 읽힙니다</span>' +
         '</div>' +
         '<div class="muted" id="' + q.id + '_exp" style="display:none; margin-top:8px;"></div>' +
@@ -919,33 +559,16 @@ function renderSettings(){
   };
 }
 
-/* =========================
-   8) 탭/이벤트
-   ========================= */
 function setTab(name){
-  document.querySelectorAll(".tab").forEach(t=>{
-    t.classList.toggle("active", t.dataset.tab === name);
-  });
+  document.querySelectorAll(".tab").forEach(t=> t.classList.toggle("active", t.dataset.tab === name));
   if (name === "learn") renderLearn();
   if (name === "review") renderReview();
   if (name === "part5") renderPart5();
   if (name === "settings") renderSettings();
 }
-
-document.querySelectorAll(".tab").forEach(t => {
-  t.addEventListener("click", () => setTab(t.dataset.tab));
-});
-
-document.getElementById("regenBtn").onclick = () => {
-  const dateKey = kstDateKey(0);
-  const ks = regenTodayRandom();
-  alert(dateKey + " 세트(랜덤)로 변경: " + ks.join(", "));
-  setTab("learn");
-};
-
-document.getElementById("ttsBtn").onclick = () => {
-  speakJP("本日はよろしくお願いいたします。");
-};
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
+document.getElementById("regenBtn").onclick = () => { regenTodayRandom(); setTab("learn"); };
+document.getElementById("ttsBtn").onclick = () => { speakJP("本日はよろしくお願いいたします。"); };
 
 setTab("learn");
 </script>
